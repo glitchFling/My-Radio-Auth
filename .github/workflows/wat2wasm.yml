@@ -1,4 +1,4 @@
-name: Build WAT → WASM & Deploy
+name: Build WAT → WASM & Deploy (always commit)
 
 on:
   push:
@@ -10,12 +10,11 @@ permissions:
   contents: write
 
 env:
-  # Cloudflare token (may be empty)
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
 jobs:
   build-wasm:
-    # Avoid retriggering on bot commits
+    # Prevent infinite loop by not running when the actor is the bot that will push commits
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
@@ -50,21 +49,21 @@ jobs:
       - name: Compile .wat → .wasm recursively
         run: |
           set -euo pipefail
-          mapfile -t WAT_FILES < <(find src -type f -name '*.wat' -print)
+          mapfile -t WAT_FILES < <(find src -type f -name '*.wat' -print || true)
           if [ ${#WAT_FILES[@]} -eq 0 ]; then
             echo "No .wat files found under src/; skipping compilation."
-            exit 0
+          else
+            for f in "${WAT_FILES[@]}"; do
+              out="${f%.wat}.wasm"
+              echo "Compiling $f → $out"
+              wat2wasm "$f" -o "$out"
+            done
           fi
-          for f in "${WAT_FILES[@]}"; do
-            out="${f%.wat}.wasm"
-            echo "Compiling $f → $out"
-            wat2wasm "$f" -o "$out"
-          done
 
       - name: Validate generated WASM
         run: |
           set -euo pipefail
-          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print)
+          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
           if [ ${#WASM_FILES[@]} -eq 0 ]; then
             echo "No .wasm files generated."
           else
@@ -79,11 +78,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts
-          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print)
+          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
           if [ ${#WASM_FILES[@]} -eq 0 ]; then
             echo "has_wasm=false" >> $GITHUB_OUTPUT
           else
-            # Copy files preserving directory structure so artifacts are organized
             for f in "${WASM_FILES[@]}"; do
               mkdir -p "artifacts/$(dirname "$f")"
               cp -- "$f" "artifacts/$f"
@@ -100,49 +98,70 @@ jobs:
           name: wasm-build
           path: ${{ steps.find_wasm.outputs.artifact_path }}
 
-      - name: Commit WASM artifacts if changed
+      - name: Commit WASM artifacts on every run (marker file)
         env:
           GITHUB_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
 
-          # Find wasm files again
-          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print)
-
-          if [ ${#WASM_FILES[@]} -eq 0 ]; then
-            echo "No .wasm files to commit; skipping commit step."
-            exit 0
-          fi
-
-          echo "Found ${#WASM_FILES[@]} wasm files to consider for commit:"
-          for f in "${WASM_FILES[@]}"; do
-            echo " - $f"
-            sha1sum "$f" || true
-          done
-
-          echo "=== Diff vs HEAD for wasm files ==="
-          git --no-pager diff --name-only HEAD -- "${WASM_FILES[@]}" || true
-          git --no-pager diff -- "${WASM_FILES[@]}" || true
+          # Find wasm files (for logging and optional staging)
+          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
+          echo "Found ${#WASM_FILES[@]} wasm files."
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage only the found files (handles spaces safely)
-          for f in "${WASM_FILES[@]}"; do
-            git add -- "$f"
-          done
+          # Update a marker file so there is always a change to commit
+          MARKER=".wasm-build-timestamp"
+          echo "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"
+          git add -- "$MARKER"
 
-          # Commit and push only if there are staged changes
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto-compile WAT → WASM [ci skip]" || true
-            BRANCH="${GITHUB_REF#refs/heads/}"
-            echo "Pushing compiled artifacts to branch: $BRANCH"
-            git push origin "HEAD:$BRANCH" || {
-              echo "git push failed; this may be due to branch protection. Consider using a PAT or allowing Actions to bypass protection."
-            }
-          else
-            echo "No changes to commit."
+          # Stage wasm files if present
+          if [ ${#WASM_FILES[@]} -ne 0 ]; then
+            for f in "${WASM_FILES[@]}"; do
+              git add -- "$f"
+            done
           fi
+
+          # Commit: this will always create a commit because the marker changed
+          git commit -m "Auto-compile WAT → WASM [ci skip] $(date --utc +%Y-%m-%dT%H:%M:%SZ)" || true
+
+          BRANCH="${GITHUB_REF#refs/heads/}"
+          echo "Pushing compiled artifacts to branch: $BRANCH"
+          git push origin "HEAD:$BRANCH" || {
+            echo "git push failed; this may be due to branch protection or token permissions."
+            echo "If branch protection blocks GITHUB_TOKEN, consider allowing Actions to bypass protection or use a PAT."
+            exit 0
+          }
+
+      # Optional: fallback using a PAT if branch protection blocks GITHUB_TOKEN
+      # To enable: create a secret GIT_PUSH_TOKEN with a PAT that has repo scope,
+      # then uncomment the step below and comment out the previous commit/push step.
+      #
+      # - name: Commit and push using PAT (fallback)
+      #   env:
+      #     GIT_PUSH_TOKEN: ${{ secrets.GIT_PUSH_TOKEN }}
+      #     GITHUB_REF: ${{ github.ref }}
+      #   run: |
+      #     set -euo pipefail
+      #     mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
+      #     git config user.name "github-actions[bot]"
+      #     git config user.email "github-actions[bot]@users.noreply.github.com"
+      #     MARKER=".wasm-build-timestamp"
+      #     echo "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"
+      #     git add -- "$MARKER"
+      #     if [ ${#WASM_FILES[@]} -ne 0 ]; then
+      #       for f in "${WASM_FILES[@]}"; do
+      #         git add -- "$f"
+      #       done
+      #     fi
+      #     git commit -m "Auto-compile WAT → WASM [ci skip] $(date --utc +%Y-%m-%dT%H:%M:%SZ)" || true
+      #     BRANCH="${GITHUB_REF#refs/heads/}"
+      #     git remote set-url origin "https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
+      #     git push origin "HEAD:$BRANCH" || {
+      #       echo "git push with PAT failed"
+      #       exit 0
+      #     }
 
       - name: Publish to Cloudflare if token present
         run: |
