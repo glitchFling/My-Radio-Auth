@@ -23,6 +23,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          
+      - name: Debug Zone
+        run: node -e "console.log(require('./wat2wasm.config.js').CompileCMD)"
 
       - name: Install wabt
         run: sudo apt-get update && sudo apt-get install -y wabt
