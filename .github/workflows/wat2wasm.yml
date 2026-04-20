@@ -32,15 +32,19 @@ jobs:
           COMPILE_CMD=$(node -e "console.log(require('./wat2wasm.config.js').CompileCMD)")
           eval $COMPILE_CMD
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hash-wasm
+          path: src/hash.wasm
+
       - name: Commit WASM (no timestamp)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Stage only the WASM output
           git add src/hash.wasm
 
-          # Commit only if WASM changed
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
@@ -48,13 +52,7 @@ jobs:
             git push
           fi
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hash-wasm
-          path: src/hash.wasm
-
-      # - name: Deploy to Cloudflare (uncomment & add CLOUDFLARE_TOKEN secret)
+      # - name: Deploy to Cloudflare (optional)
       #   env:
       #     CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN }}
       #   run: npx wrangler deploy
