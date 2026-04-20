@@ -1,0 +1,47 @@
+name: Build & Commit WAT → WASM
+
+on:
+  push:
+    branches:
+      - "**"
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # REQUIRED for auto-commit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install WABT (wat2wasm)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wabt
+
+      - name: Compile all .wat files → .wasm
+        run: |
+          for f in *.wat; do
+            out="${f%.wat}.wasm"
+            echo "Compiling $f → $out"
+            wat2wasm "$f" -o "$out"
+          done
+
+      - name: Commit WASM artifacts
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add *.wasm
+
+          # Only commit if there are changes
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto-compile WAT → WASM"
+            git push
+          else
+            echo "No changes to commit."
+          fi
