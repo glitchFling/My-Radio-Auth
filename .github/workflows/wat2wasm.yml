@@ -15,73 +15,122 @@ jobs:
       contents: write
 
     env:
-      # Make the secret available to steps as an env var (may be empty)
+      # Make the Cloudflare token available to steps (may be empty)
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # Ensure git push can authenticate (actions/checkout sets this up)
+      GIT_PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Debug: show repo state
+        run: |
+          echo "PWD: $(pwd)"
+          echo "Git branch: ${GITHUB_REF#refs/heads/}"
+          echo "Git actor: $GITHUB_ACTOR"
+          echo "Git status:"
+          git status --porcelain || true
+          echo "Root files:"
+          ls -la || true
+          echo "src directory listing:"
+          ls -la src || true
+          echo "Show any .wat files under src/:"
+          find src -type f -name '*.wat' -print || true
 
       - name: Install WABT (wat2wasm)
         run: |
           sudo apt-get update
           sudo apt-get install -y wabt
 
-      - name: Validate config file
+      - name: Validate config file (optional)
         run: |
           if [ -f src/wat2wasm.config.js ]; then
             node -e "const cfg = require('./src/wat2wasm.config.js'); if(!cfg || !cfg.CompileCMD) { console.error('Missing CompileCMD in src/wat2wasm.config.js'); process.exit(1); } console.log('Using CompileCMD from config:', cfg.CompileCMD);"
           else
-            echo "No config file found at src/wat2wasm.config.js; falling back to default compile loop."
+            echo "No config file found at src/wat2wasm.config.js; workflow will compile all src/**/*.wat files."
           fi
 
-      - name: Compile src/*.wat → src/*.wasm (config-aware)
+      - name: Compile .wat → .wasm (recursive, safe)
         run: |
           set -euo pipefail
 
+          # If config exists, run its CompileCMD once; otherwise compile all .wat files under src/
           if [ -f src/wat2wasm.config.js ]; then
+            echo "Running configured compile command..."
             node -e "
               const cfg = require('./src/wat2wasm.config.js');
               const { execSync } = require('child_process');
-              console.log('Running:', cfg.CompileCMD);
+              console.log('CompileCMD:', cfg.CompileCMD);
               execSync(cfg.CompileCMD, { stdio: 'inherit' });
             "
           else
-            sh -c 'for f in src/*.wat; do out=\"${f%.wat}.wasm\"; echo \"Compiling $f → $out\"; wat2wasm \"$f\" -o \"$out\"; done'
+            echo "No config; compiling all .wat files under src/ recursively."
+            mapfile -t WAT_FILES < <(find src -type f -name '*.wat' -print)
+            if [ ${#WAT_FILES[@]} -eq 0 ]; then
+              echo "No .wat files found under src/; skipping compilation."
+              exit 0
+            fi
+            for f in "${WAT_FILES[@]}"; do
+              out="${f%.wat}.wasm"
+              echo "Compiling $f → $out"
+              wat2wasm "$f" -o "$out"
+            done
           fi
 
-      - name: Show generated WASM files
+      - name: Validate generated WASM
         run: |
-          ls -la src/*.wasm || echo "No wasm files generated"
+          set -euo pipefail
+          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print)
+          if [ ${#WASM_FILES[@]} -eq 0 ]; then
+            echo "No .wasm files generated."
+          else
+            echo "Generated .wasm files:"
+            for w in "${WASM_FILES[@]}"; do
+              ls -la "$w"
+            done
+          fi
 
-      - name: Commit WASM artifacts
+      - name: Commit WASM artifacts (only if changed)
+        env:
+          GITHUB_REF: ${{ github.ref }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add src/*.wasm || true
+          # Stage any wasm files
+          git add src/**/*.wasm || true
 
+          # If there are staged changes, commit and push back to the same branch
           if ! git diff --cached --quiet; then
             git commit -m "Auto-compile WAT → WASM [ci skip]" || true
-            # Push back to the same branch
-            git push origin HEAD:"${GITHUB_REF#refs/heads/}" || true
+
+            # Push using the provided GITHUB_TOKEN (actions/checkout sets remote auth)
+            BRANCH="${GITHUB_REF#refs/heads/}"
+            echo "Pushing compiled artifacts to branch: $BRANCH"
+            git push origin "HEAD:$BRANCH" || {
+              echo "git push failed; continuing without failing the job."
+            }
           else
             echo "No changes to commit."
           fi
-        env:
-          GITHUB_REF: ${{ github.ref }}
 
-      - name: Publish to Cloudflare (only if token present)
+      - name: Publish to Cloudflare (runtime-guarded)
         run: |
+          set -euo pipefail
           if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
             echo "CLOUDFLARE_API_TOKEN not set; skipping Cloudflare publish."
             exit 0
           fi
 
+          echo "Installing wrangler..."
           npm install -g wrangler@2
-          # Publish; wrangler will use your wrangler.toml and the compiled wasm at src/hash.wasm
+
+          echo "Publishing to Cloudflare Workers..."
+          # wrangler will read wrangler.toml and include src/*.wasm per your config
           wrangler publish
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
