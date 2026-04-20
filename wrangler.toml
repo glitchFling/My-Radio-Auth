@@ -1,0 +1,6 @@
+name = "deterministic-id-worker"
+main = "src/worker.js"
+compatibility_date = "2024-04-01"
+
+[wasm_modules]
+HASH_WASM = "dist/hash.wasm"
