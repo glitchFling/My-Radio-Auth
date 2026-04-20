@@ -1,3 +1,4 @@
 name = "glitchauth"
 main = "src/worker.mjs"
+compatibility_date = "2026-04-20"
 type = "esm"
