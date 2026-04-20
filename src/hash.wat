@@ -4,10 +4,8 @@
   (global $heap_ptr (mut i32) (i32.const 1024))
   (global $last_len (mut i32) (i32.const 0))
 
-  ;; ----------------------------------------------------
-  ;; alloc(len) -> ptr
-  ;; ----------------------------------------------------
-  (func (export "alloc") (param $len i32) (result i32)
+  ;; Named alloc so callers can use (call $alloc ...)
+  (func $alloc (export "alloc") (param $len i32) (result i32)
     (local $old i32)
     (local.set $old (global.get $heap_ptr))
     (global.set $heap_ptr
@@ -16,17 +14,13 @@
     (local.get $old)
   )
 
-  ;; ----------------------------------------------------
-  ;; get_last_len()
-  ;; ----------------------------------------------------
-  (func (export "get_last_len") (result i32)
+  ;; Named get_last_len
+  (func $get_last_len (export "get_last_len") (result i32)
     (global.get $last_len)
   )
 
-  ;; ----------------------------------------------------
   ;; hash_str(ptr, len) -> out_ptr
-  ;; ----------------------------------------------------
-  (func (export "hash_str") (param $ptr i32) (param $len i32) (result i32)
+  (func $hash_str (export "hash_str") (param $ptr i32) (param $len i32) (result i32)
     (local $i i32)
     (local $byte i32)
     (local $nibble i32)
@@ -39,9 +33,7 @@
     ;; FNV-1a 64-bit offset basis
     (local.set $h (i64.const 1469598103934665603))
 
-    ;; ----------------------------------------------------
-    ;; BYTE LOOP (block + loop = REQUIRED)
-    ;; ----------------------------------------------------
+    ;; BYTE LOOP
     (local.set $i (i32.const 0))
     (block $done_bytes
       (loop $loop_bytes
@@ -77,9 +69,7 @@
       )
     )
 
-    ;; ----------------------------------------------------
-    ;; HEX ENCODING (block + loop = REQUIRED)
-    ;; ----------------------------------------------------
+    ;; HEX ENCODING
     (local.set $out_ptr (call $alloc (i32.const 17)))
     (global.set $last_len (i32.const 16))
 
@@ -132,6 +122,7 @@
       )
     )
 
+    ;; null terminator
     (i32.store8
       (i32.add (local.get $out_ptr) (i32.const 16))
       (i32.const 0)
