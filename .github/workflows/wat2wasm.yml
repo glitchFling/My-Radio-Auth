@@ -132,12 +132,13 @@ jobs:
       #       exit 0
       #     }
 
-      - name: Publish to Cloudflare if token present
-        run: |
-          set -euo pipefail
-          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-            echo "CLOUDFLARE_API_TOKEN not set; skipping publish."
-            exit 0
-          fi
-          npm install -g wrangler@2
-          wrangler publish
+      # DISABLED: Publish to Cloudflare if token present (removed)
+      # - name: Publish to Cloudflare if token present
+      #   run: |
+      #     set -euo pipefail
+      #     if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+      #       echo "CLOUDFLARE_API_TOKEN not set; skipping publish."
+      #       exit 0
+      #     fi
+      #     npm install -g wrangler@2
+      #     wrangler publish
