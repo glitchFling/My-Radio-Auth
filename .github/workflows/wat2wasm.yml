@@ -13,7 +13,7 @@ env:
 
 jobs:
   build-wasm:
-    if: github.actor != 'github-actions[bot]'
+    # if: github.actor != 'github-actions[bot]'  # Disabled to allow bot triggers
     runs-on: ubuntu-latest
 
     permissions:
