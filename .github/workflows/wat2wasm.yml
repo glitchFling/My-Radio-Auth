@@ -1,150 +1,39 @@
-name: Build WAT → WASM & Always Commit
+name: Build & Commit WASM
 
 on:
   push:
-    branches:
-      - "**"
 
 permissions:
   contents: write
 
-env:
-  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-
 jobs:
-  build-wasm:
-    # if: github.actor != 'github-actions[bot]'  # Disabled to allow bot triggers
+  build:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          persist-credentials: true
 
-      - name: Debug repo state
+      - name: Install wabt
+        run: sudo apt-get update && sudo apt-get install -y wabt
+
+      - name: Compile hash.wat
+        run: wat2wasm src/hash.wat -o src/hash.wasm
+
+      - name: Commit changes
         run: |
-          set -euo pipefail
-          echo "Actor: $GITHUB_ACTOR"
-          echo "Branch: ${GITHUB_REF#refs/heads/}"
-          git status --porcelain || true
-          echo "Tracked wasm files:"
-          git ls-files -- src/**/*.wasm || true
-          echo "Find .wat files:"
-          find src -type f -name '*.wat' -print || true
-          echo "Find .wasm files:"
-          find src -type f -name '*.wasm' -print || true
-
-      - name: Install WABT (wat2wasm)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y wabt
-
-      - name: Compile .wat → .wasm recursively
-        run: |
-          set -euo pipefail
-          mapfile -t WAT_FILES < <(find src -type f -name '*.wat' -print || true)
-          if [ ${#WAT_FILES[@]} -eq 0 ]; then
-            echo "No .wat files found; skipping compilation."
-          else
-            for f in "${WAT_FILES[@]}"; do
-              out="${f%.wat}.wasm"
-              echo "Compiling $f → $out"
-              wat2wasm "$f" -o "$out"
-            done
-          fi
-
-      - name: Validate generated WASM
-        run: |
-          set -euo pipefail
-          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
-          if [ ${#WASM_FILES[@]} -eq 0 ]; then
-            echo "No .wasm files generated."
-          else
-            echo "Generated .wasm files:"
-            for w in "${WASM_FILES[@]}"; do
-              ls -la "$w"
-              sha1sum "$w" || true
-            done
-          fi
-
-      - name: Prepare artifact directory
-        id: find_wasm
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
-          if [ ${#WASM_FILES[@]} -eq 0 ]; then
-            echo "has_wasm=false" >> $GITHUB_OUTPUT
-          else
-            for f in "${WASM_FILES[@]}"; do
-              mkdir -p "artifacts/$(dirname "$f")"
-              cp -- "$f" "artifacts/$f"
-            done
-            echo "has_wasm=true" >> $GITHUB_OUTPUT
-            echo "artifact_path=artifacts" >> $GITHUB_OUTPUT
-            echo "wasm_count=${#WASM_FILES[@]}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Upload WASM artifacts
-        if: steps.find_wasm.outputs.has_wasm == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: wasm-build
-          path: ${{ steps.find_wasm.outputs.artifact_path }}
-
-      - name: Minimal commit src/hash.wasm if changed
-        run: |
-          set -euo pipefail
-          if git diff --quiet src/hash.wasm; then
-            echo "src/hash.wasm unchanged; skipping commit"
-            exit 0
-          fi
-          echo "src/hash.wasm changed; committing..."
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add src/hash.wasm
-          git commit -m "Auto-update src/hash.wasm from wat [ci skip]"
-          git push origin HEAD:${{ github.ref_name }} || {
-            echo "Push failed (branch protection?); consider PAT."
-            exit 0
-          }
+          echo "WASM rebuild: $(date --utc +%Y-%m-%dT%H:%M:%SZ)" > .wasm-timestamp
+          git add .wasm-timestamp || true
+          git commit -m "ci: rebuild hash.wasm [skip ci]" || echo "No changes to commit"
+          git push || echo "Push failed; add repo secret GIT_PUSH_TOKEN with repo write PAT"
 
-      # PAT fallback commented
-      #     GIT_PUSH_TOKEN: ${{ secrets.GIT_PUSH_TOKEN }}
-      #     GITHUB_REF: ${{ github.ref }}
-      #   run: |
-      #     set -euo pipefail
-      #     mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
-      #     git config user.name "github-actions[bot]"
-      #     git config user.email "github-actions[bot]@users.noreply.github.com"
-      #     if [ ${#WASM_FILES[@]} -ne 0 ]; then
-      #       for f in "${WASM_FILES[@]}"; do
-      #         git add -f -- "$f"
-      #       done
-      #     fi
-      #     MARKER=".wasm-build-timestamp"
-      #     echo "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"
-      #     git add -- "$MARKER"
-      #     git commit -m "Auto-compile WAT → WASM [ci skip] $(date --utc +%Y-%m-%dT%H:%M:%SZ)" || true
-      #     BRANCH="${GITHUB_REF#refs/heads/}"
-      #     git remote set-url origin "https://x-access-token:${GIT_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
-      #     git push origin "HEAD:$BRANCH" || {
-      #       echo "git push with PAT failed"
-      #       exit 0
-      #     }
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hash-wasm
+          path: src/hash.wasm
 
-      # DISABLED: Publish to Cloudflare if token present (removed)
-      # - name: Publish to Cloudflare if token present
-      #   run: |
-      #     set -euo pipefail
-      #     if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
-      #       echo "CLOUDFLARE_API_TOKEN not set; skipping publish."
-      #       exit 0
-      #     fi
-      #     npm install -g wrangler@2
-      #     wrangler publish
