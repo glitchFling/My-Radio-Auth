@@ -5,16 +5,18 @@ on:
     branches:
       - "**"
 
+env:
+  # Cloudflare token (may be empty)
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
 jobs:
   build-wasm:
+    # Avoid retriggering on bot commits
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
-
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -54,25 +56,68 @@ jobs:
             wat2wasm "$f" -o "$out"
           done
 
-      - name: Show generated WASM
+      - name: Validate generated WASM
         run: |
-          find src -type f -name '*.wasm' -print -exec ls -la {} \; || echo "No wasm files"
+          set -euo pipefail
+          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print)
+          if [ ${#WASM_FILES[@]} -eq 0 ]; then
+            echo "No .wasm files generated."
+          else
+            echo "Generated .wasm files:"
+            for w in "${WASM_FILES[@]}"; do
+              ls -la "$w"
+            done
+          fi
+
+      - name: Prepare artifact directory (if any wasm)
+        id: find_wasm
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print)
+          if [ ${#WASM_FILES[@]} -eq 0 ]; then
+            echo "has_wasm=false" >> $GITHUB_OUTPUT
+          else
+            # Copy files preserving directory structure so artifacts are organized
+            for f in "${WASM_FILES[@]}"; do
+              mkdir -p "artifacts/$(dirname "$f")"
+              cp -- "$f" "artifacts/$f"
+            done
+            echo "has_wasm=true" >> $GITHUB_OUTPUT
+            echo "artifact_path=artifacts" >> $GITHUB_OUTPUT
+            echo "wasm_count=${#WASM_FILES[@]}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Upload WASM artifacts
+        if: steps.find_wasm.outputs.has_wasm == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: wasm-build
-          path: |
-            src/**/*.wasm
+          path: ${{ steps.find_wasm.outputs.artifact_path }}
 
       - name: Commit WASM artifacts if changed
         env:
           GITHUB_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
+
+          # Find wasm files again
+          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print)
+
+          if [ ${#WASM_FILES[@]} -eq 0 ]; then
+            echo "No .wasm files to commit; skipping commit step."
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/**/*.wasm || true
+
+          # Stage only the found files (handles spaces safely)
+          for f in "${WASM_FILES[@]}"; do
+            git add -- "$f"
+          done
+
+          # Commit and push only if there are staged changes
           if ! git diff --cached --quiet; then
             git commit -m "Auto-compile WAT → WASM [ci skip]" || true
             BRANCH="${GITHUB_REF#refs/heads/}"
@@ -89,5 +134,7 @@ jobs:
             echo "CLOUDFLARE_API_TOKEN not set; skipping publish."
             exit 0
           fi
+          echo "Installing wrangler..."
           npm install -g wrangler@2
+          echo "Publishing to Cloudflare Workers..."
           wrangler publish
