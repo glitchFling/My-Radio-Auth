@@ -2,6 +2,9 @@ name: Build & Commit WASM
 
 on:
   push:
+    paths:
+      - 'src/hash.wat'
+      - 'wat2wasm.config.js'
 
 permissions:
   contents: write
@@ -9,27 +12,41 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Install wabt
         run: sudo apt-get update && sudo apt-get install -y wabt
 
-      - name: Compile hash.wat
-        run: wat2wasm src/hash.wat -o src/hash.wasm
+      - name: Compile hash.wat (dynamic)
+        run: |
+          COMPILE_CMD=$(node -e "console.log(require('./wat2wasm.config.js').CompileCMD)")
+          eval $COMPILE_CMD
 
-      - name: Commit changes
+      - name: Commit WASM (no timestamp)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage only the WASM output
           git add src/hash.wasm
-          echo "WASM rebuild: $(date --utc +%Y-%m-%dT%H:%M:%SZ)" > .wasm-timestamp
-          git add .wasm-timestamp || true
-          git commit -m "ci: rebuild hash.wasm [skip ci]" || echo "No changes to commit"
-          git push || echo "Push failed; add repo secret GIT_PUSH_TOKEN with repo write PAT"
+
+          # Commit only if WASM changed
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "ci: rebuild hash.wasm [skip ci]"
+            git push
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -37,3 +54,7 @@ jobs:
           name: hash-wasm
           path: src/hash.wasm
 
+      # - name: Deploy to Cloudflare (uncomment & add CLOUDFLARE_TOKEN secret)
+      #   env:
+      #     CLOUDFLARE_TOKEN: ${{ secrets.CLOUDFLARE_TOKEN }}
+      #   run: npx wrangler deploy
