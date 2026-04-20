@@ -1,0 +1,1 @@
+**DONE: CI Committing Disabled** ✅ Committed & pushed workflow (ed17405)\n✅ Cleaned leftovers (.wasm-build-timestamp gone)\n✅ Tested: Repo clean, git status good\n\nCI now compiles/uploads artifacts but NO auto-commit/push. Task complete!
