@@ -5,6 +5,10 @@ on:
     branches:
       - "**"
 
+# Allow the workflow to push changes back to the repository
+permissions:
+  contents: write
+
 env:
   # Cloudflare token (may be empty)
   CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -23,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Debug repository state
         run: |
@@ -109,6 +114,16 @@ jobs:
             exit 0
           fi
 
+          echo "Found ${#WASM_FILES[@]} wasm files to consider for commit:"
+          for f in "${WASM_FILES[@]}"; do
+            echo " - $f"
+            sha1sum "$f" || true
+          done
+
+          echo "=== Diff vs HEAD for wasm files ==="
+          git --no-pager diff --name-only HEAD -- "${WASM_FILES[@]}" || true
+          git --no-pager diff -- "${WASM_FILES[@]}" || true
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -122,7 +137,9 @@ jobs:
             git commit -m "Auto-compile WAT → WASM [ci skip]" || true
             BRANCH="${GITHUB_REF#refs/heads/}"
             echo "Pushing compiled artifacts to branch: $BRANCH"
-            git push origin "HEAD:$BRANCH" || echo "git push failed"
+            git push origin "HEAD:$BRANCH" || {
+              echo "git push failed; this may be due to branch protection. Consider using a PAT or allowing Actions to bypass protection."
+            }
           else
             echo "No changes to commit."
           fi
