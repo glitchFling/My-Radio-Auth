@@ -97,18 +97,24 @@ jobs:
           name: wasm-build
           path: ${{ steps.find_wasm.outputs.artifact_path }}
 
-# DISABLED: Force-add and commit WASM artifacts on every run (removed to prevent loops)
-# Original step commented out:
-# - name: Force-add and commit WASM artifacts on every run
-#   env:
-#     GITHUB_REF: ${{ github.ref }}
-#   run: |
-#     ... [entire run block]
+      - name: Minimal commit src/hash.wasm if changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet src/hash.wasm; then
+            echo "src/hash.wasm unchanged; skipping commit"
+            exit 0
+          fi
+          echo "src/hash.wasm changed; committing..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/hash.wasm
+          git commit -m "Auto-update src/hash.wasm from wat [ci skip]"
+          git push origin HEAD:${{ github.ref_name }} || {
+            echo "Push failed (branch protection?); consider PAT."
+            exit 0
+          }
 
-      # PAT fallback example (uncomment to use)
-      # - name: Commit and push using PAT fallback
-      #   if: failure()
-      #   env:
+      # PAT fallback commented
       #     GIT_PUSH_TOKEN: ${{ secrets.GIT_PUSH_TOKEN }}
       #     GITHUB_REF: ${{ github.ref }}
       #   run: |
