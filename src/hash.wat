@@ -4,7 +4,7 @@
   (global $heap_ptr (mut i32) (i32.const 1024))
   (global $last_len (mut i32) (i32.const 0))
 
-  ;; Named alloc so callers can use (call $alloc ...) TEST
+  ;; Named alloc so callers can use (call $alloc ...)
   (func $alloc (export "alloc") (param $len i32) (result i32)
     (local $old i32)
     (local.set $old (global.get $heap_ptr))
