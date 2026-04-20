@@ -97,51 +97,13 @@ jobs:
           name: wasm-build
           path: ${{ steps.find_wasm.outputs.artifact_path }}
 
-      - name: Force-add and commit WASM artifacts on every run
-        env:
-          GITHUB_REF: ${{ github.ref }}
-        run: |
-          set -euo pipefail
-
-          # Debug listing
-          echo "=== Pre-commit git status ==="
-          git status --porcelain || true
-
-          # Find wasm files
-          mapfile -t WASM_FILES < <(find src -type f -name '*.wasm' -print || true)
-          echo "Found ${#WASM_FILES[@]} wasm files."
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Force-add wasm files to override .gitignore if necessary
-          if [ ${#WASM_FILES[@]} -ne 0 ]; then
-            for f in "${WASM_FILES[@]}"; do
-              echo "Force-adding $f"
-              git add -f -- "$f"
-            done
-          fi
-
-          # Always update a marker so a commit is guaranteed
-          MARKER=".wasm-build-timestamp"
-          echo "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"
-          git add -- "$MARKER"
-
-          # Show staged files
-          echo "=== Staged files ==="
-          git --no-pager diff --cached --name-only || true
-
-          # Commit (marker ensures commit will be created)
-          git commit -m "Auto-compile WAT → WASM [ci skip] $(date --utc +%Y-%m-%dT%H:%M:%SZ)" || true
-
-          # Push using GITHUB_TOKEN (persist-credentials must be true)
-          BRANCH="${GITHUB_REF#refs/heads/}"
-          echo "Pushing to branch: $BRANCH"
-          if ! git push origin "HEAD:$BRANCH"; then
-            echo "git push failed. Possible causes: branch protection or insufficient token permissions."
-            echo "If branch protection blocks GITHUB_TOKEN, use the PAT fallback step (commented in workflow)."
-            exit 0
-          fi
+# DISABLED: Force-add and commit WASM artifacts on every run (removed to prevent loops)
+# Original step commented out:
+# - name: Force-add and commit WASM artifacts on every run
+#   env:
+#     GITHUB_REF: ${{ github.ref }}
+#   run: |
+#     ... [entire run block]
 
       # PAT fallback example (uncomment to use)
       # - name: Commit and push using PAT fallback
