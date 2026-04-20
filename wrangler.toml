@@ -1,4 +1,4 @@
-name = "deterministic-id-worker"
+name = "glitchauth"
 main = "src/worker.js"
 compatibility_date = "2024-04-01"
 
